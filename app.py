@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-MODEL_PATH = Path("models/model43_tomat.keras")
+MODEL_PATH = Path("models/best_model.keras")   # gunakan file .keras terbaru
 LABEL_PATH = Path("models/class_labels.json")
 IMG_SIZE = (256, 256)
 
@@ -23,6 +23,7 @@ IMG_SIZE = (256, 256)
 @st.cache_resource(show_spinner=True)
 def load_model():
     try:
+        # load tanpa compile → inference-only
         model = tf.keras.models.load_model(MODEL_PATH, compile=False)
         return model
     except Exception as e:
@@ -119,16 +120,20 @@ def resolve_image_path(p: str) -> Path | None:
 def preprocess_image(image: Image.Image):
     img = image.resize(IMG_SIZE)
     img_array = np.array(img) / 255.0
-    if img_array.shape[-1] == 4:
+    if img_array.shape[-1] == 4:  # kalau ada alpha channel
         img_array = img_array[..., :3]
-    return np.expand_dims(img_array, axis=0)
+    return np.expand_dims(img_array, axis=0)  # (1, 256, 256, 3)
 
 def predict_image(img: Image.Image):
     if model is None:
         return None, None
     x = preprocess_image(img)
-    preds = model.predict(x, verbose=0)[0]
-    return preds, class_labels[np.argmax(preds)] if class_labels else str(np.argmax(preds))
+    preds = model.predict(x, verbose=0)[0]  # (10,)
+    if class_labels:
+        label = class_labels[np.argmax(preds)]
+    else:
+        label = str(np.argmax(preds))
+    return preds, label
 
 # ======================= NAVBAR ============================
 with st.container():
