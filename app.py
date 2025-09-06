@@ -204,7 +204,7 @@ def predict_image(img: Image.Image):
         
         # Prediksi
         with st.spinner("🔄 Sedang melakukan prediksi..."):
-            preds = model.predict(x, verbose=0)
+            preds = current_model.predict(x, verbose=0)
             
         # Validasi output
         if preds is None or len(preds) == 0:
