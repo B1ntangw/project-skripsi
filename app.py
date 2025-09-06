@@ -25,9 +25,19 @@ def load_model():
     try:
         # load tanpa compile → inference-only
         model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+        
+        # Debug: tampilkan info model
+        st.write("✅ Model berhasil dimuat!")
+        st.write(f"📊 Model input shape: {model.input_shape}")
+        st.write(f"📈 Model output shape: {model.output_shape}")
+        
         return model
     except Exception as e:
-        st.error(f"Gagal memuat model: {e}")
+        st.error(f"❌ Gagal memuat model: {e}")
+        st.write("💡 Kemungkinan penyebab:")
+        st.write("- File model tidak ditemukan")
+        st.write("- Model architecture tidak kompatibel")
+        st.write("- Versi TensorFlow berbeda saat training vs inference")
         return None
 
 model = load_model()
@@ -35,13 +45,37 @@ model = load_model()
 # ===================== LOAD LABELS =========================
 def load_labels():
     if LABEL_PATH.exists():
-        with open(LABEL_PATH, "r") as f:
-            data = json.load(f)
-        classes = data.get("classes", [])
-        if classes:  # kalau json ada isinya
-            return classes
-    # fallback default
-    return [f"Class {i}" for i in range(model.output_shape[-1])] if model else []
+        try:
+            with open(LABEL_PATH, "r") as f:
+                data = json.load(f)
+            classes = data.get("classes", [])
+            if classes:  # kalau json ada isinya
+                return classes
+        except Exception as e:
+            st.warning(f"⚠️ Gagal load labels: {e}")
+    
+    # fallback default - sesuaikan dengan jumlah class yang umum
+    default_classes = [
+        "Tomato___Bacterial_spot",
+        "Tomato___Early_blight", 
+        "Tomato___Late_blight",
+        "Tomato___Leaf_Mold",
+        "Tomato___Septoria_leaf_spot",
+        "Tomato___Spider_mites Two-spotted_spider_mite",
+        "Tomato___Target_Spot",
+        "Tomato___Tomato_Yellow_Leaf_Curl_Virus",
+        "Tomato___Tomato_mosaic_virus",
+        "Tomato___healthy"
+    ]
+    
+    if model:
+        num_classes = model.output_shape[-1]
+        if len(default_classes) >= num_classes:
+            return default_classes[:num_classes]
+        else:
+            return [f"Class_{i}" for i in range(num_classes)]
+    
+    return default_classes
 
 class_labels = load_labels()
 
@@ -108,6 +142,8 @@ CLASS_DESCRIPTIONS = {
 }
 
 def resolve_image_path(p: str) -> Path | None:
+    if not p:
+        return None
     base = Path(p)
     if base.exists():
         return base
@@ -121,33 +157,90 @@ def resolve_image_path(p: str) -> Path | None:
 
 # ================== PREDICT FUNCTION =======================
 def preprocess_image(image: Image.Image):
-    # Resize dan pastikan RGB
-    img = image.resize(IMG_SIZE).convert("RGB")
-    img_array = np.array(img) / 255.0
+    """
+    Preprocessing gambar untuk model CNN
+    """
+    try:
+        # Resize dan pastikan RGB
+        img = image.resize(IMG_SIZE).convert("RGB")
+        img_array = np.array(img, dtype=np.float32) / 255.0
 
-    # Pastikan shape (256, 256, 3)
-    if img_array.ndim == 2:  # grayscale → ubah jadi 3 channel
-        img_array = np.stack([img_array] * 3, axis=-1)
-    elif img_array.shape[-1] == 4:  # RGBA → buang alpha
-        img_array = img_array[..., :3]
+        # Pastikan shape (256, 256, 3)
+        if img_array.ndim == 2:  # grayscale → ubah jadi 3 channel
+            img_array = np.stack([img_array] * 3, axis=-1)
+        elif img_array.shape[-1] == 4:  # RGBA → buang alpha
+            img_array = img_array[..., :3]
+        elif img_array.shape[-1] != 3:
+            raise ValueError(f"Unexpected number of channels: {img_array.shape[-1]}")
 
-    # Expand ke batch (1, 256, 256, 3)
-    img_array = np.expand_dims(img_array, axis=0).astype(np.float32)
-
-    return img_array
-
+        # Expand ke batch dimension (1, 256, 256, 3)
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        return img_array
+        
+    except Exception as e:
+        st.error(f"❌ Error dalam preprocessing: {e}")
+        return None
 
 def predict_image(img: Image.Image):
+    """
+    Melakukan prediksi pada gambar
+    """
     if model is None:
+        st.error("❌ Model tidak tersedia!")
         return None, None
-    x = preprocess_image(img)
-
-    # Debug: cek shape input
-    st.write("🔎 Shape input ke model:", x.shape)
-
-    preds = model.predict(x, verbose=0)[0]  # hasil shape (10,)
-    label = class_labels[np.argmax(preds)]
-    return preds, label
+        
+    try:
+        # Preprocessing
+        x = preprocess_image(img)
+        if x is None:
+            return None, None
+        
+        # Debug info
+        with st.expander("🔍 Debug Info"):
+            st.write(f"📐 Input shape: {x.shape}")
+            st.write(f"📊 Input dtype: {x.dtype}")
+            st.write(f"📈 Input range: [{x.min():.3f}, {x.max():.3f}]")
+        
+        # Prediksi
+        with st.spinner("🔄 Sedang melakukan prediksi..."):
+            preds = model.predict(x, verbose=0)
+            
+        # Validasi output
+        if preds is None or len(preds) == 0:
+            st.error("❌ Model tidak menghasilkan output!")
+            return None, None
+            
+        # Ambil hasil untuk batch pertama
+        pred_probs = preds[0]
+        
+        # Debug output
+        with st.expander("📋 Prediction Details"):
+            st.write(f"📊 Raw predictions shape: {preds.shape}")
+            st.write(f"🎯 Prediction probabilities: {pred_probs}")
+            st.write(f"📈 Max probability: {np.max(pred_probs):.4f}")
+            st.write(f"🏆 Predicted class index: {np.argmax(pred_probs)}")
+        
+        # Validasi jumlah class
+        if len(pred_probs) != len(class_labels):
+            st.warning(f"⚠️ Mismatch: Model output {len(pred_probs)} classes, labels have {len(class_labels)}")
+            
+        # Ambil label prediksi
+        predicted_idx = np.argmax(pred_probs)
+        if predicted_idx < len(class_labels):
+            predicted_label = class_labels[predicted_idx]
+        else:
+            predicted_label = f"Unknown_Class_{predicted_idx}"
+            
+        return pred_probs, predicted_label
+        
+    except Exception as e:
+        st.error(f"❌ Error dalam prediksi: {e}")
+        st.write("💡 Kemungkinan penyebab:")
+        st.write("- Input shape tidak sesuai dengan yang diharapkan model")
+        st.write("- Model architecture bermasalah")
+        st.write("- Preprocessing gambar gagal")
+        return None, None
 
 # ======================= NAVBAR ============================
 with st.container():
@@ -173,21 +266,22 @@ st.markdown("""<style>.nav-link::before { display: none !important; }</style>"""
 
 # ====================== MAIN PAGE ==========================
 if selected == "Beranda":
-    st.title(" Tomato Leaf Disease Classifier")
+    st.title("🍅 Tomato Leaf Disease Classifier")
     st.markdown(
         """
         <div style="padding:20px; background-color:#2c2c2c; border-radius:10px; margin-bottom:20px; color:#f1f1f1;">
         <h3>Selamat Datang Di Website</h3>
         <p>Aplikasi ini menggunakan model <b>Convolutional Neural Network (CNN)</b> 
         untuk mendeteksi penyakit pada daun tomat secara otomatis</p>
-        <p> Pada halaman ini terdapat 9 jenis penyakit tanaman tomat beserta deskripsi penyakitnya</p>
+        <p>🔍 Pada halaman ini terdapat 9 jenis penyakit tanaman tomat beserta deskripsi penyakitnya</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     if class_labels:
-        st.subheader(" Daftar Kelas")
+        st.subheader("📋 Daftar Kelas")
+        st.markdown(f"📊 Total kelas: {len(class_labels)}")
         st.markdown("<br>", unsafe_allow_html=True)
 
         cols = st.columns(3)
@@ -211,15 +305,22 @@ if selected == "Beranda":
                 )
 
                 if img_path:
-                    # Gambar center + kasih jarak bawah
-                    st.markdown(
-                        f"""
-                        <div style='display:flex; justify-content:center; margin-bottom:15px;'>
-                            <img src="data:image/png;base64,{base64.b64encode(open(img_path, "rb").read()).decode()}" width="200">
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                    try:
+                        # Gambar center + kasih jarak bawah
+                        img_b64 = base64.b64encode(open(img_path, "rb").read()).decode()
+                        st.markdown(
+                            f"""
+                            <div style='display:flex; justify-content:center; margin-bottom:15px;'>
+                                <img src="data:image/png;base64,{img_b64}" width="200" style="border-radius:8px;">
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                    except Exception as e:
+                        st.markdown(
+                            f"<div style='padding:15px; background:#333; border-radius:8px; text-align:center; margin-bottom:15px;'>❌ Error loading image: {str(e)[:50]}...</div>",
+                            unsafe_allow_html=True
+                        )
                 else:
                     st.markdown(
                         f"<div style='padding:15px; background:#333; border-radius:8px; text-align:center; margin-bottom:15px;'>❌ (Gambar tidak ditemukan)</div>",
@@ -227,33 +328,81 @@ if selected == "Beranda":
                     )
 
                 # Deskripsi justify biar rapi
-                with st.expander("Deskripsi Tanaman"):
+                with st.expander("📖 Deskripsi Tanaman"):
                     st.markdown(f"<div style='text-align:justify; line-height:1.6;'>{desc}</div>", unsafe_allow_html=True)
-
 
 elif selected == "Deteksi Tanaman":
     st.title("📸 Deteksi Penyakit Daun Tomat")
+    
+    # Cek apakah model tersedia
+    if model is None:
+        st.error("❌ Model tidak dapat dimuat. Silakan periksa file model dan coba lagi.")
+        st.stop()
 
     # Pilih sumber input
-    option = st.radio("Pilih sumber gambar:", ["Upload Gambar", "Gunakan Kamera"])
+    option = st.radio("📂 Pilih sumber gambar:", ["Upload Gambar", "Gunakan Kamera"])
 
     img = None
 
     if option == "Upload Gambar":
         uploaded_file = st.file_uploader("📤 Upload Gambar Daun Tomat", type=["jpg", "jpeg", "png"])
         if uploaded_file:
-            img = Image.open(uploaded_file).convert("RGB")
-            st.image(img, caption="📷 Gambar yang diupload", use_container_width=True)
+            try:
+                img = Image.open(uploaded_file).convert("RGB")
+                st.image(img, caption="📷 Gambar yang diupload", use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Error membuka gambar: {e}")
 
     elif option == "Gunakan Kamera":
-        camera_file = st.camera_input("Ambil foto dengan kamera")
+        camera_file = st.camera_input("📷 Ambil foto dengan kamera")
         if camera_file:
-            img = Image.open(camera_file).convert("RGB")
-            st.image(img, caption="📷 Foto dari kamera", use_container_width=True)
+            try:
+                img = Image.open(camera_file).convert("RGB")
+                st.image(img, caption="📷 Foto dari kamera", use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Error membuka foto dari kamera: {e}")
 
     # Prediksi kalau ada gambar
-    if img is not None and st.button("🔍 Jalankan Prediksi"):
-        preds, label = predict_image(img)
-        if preds is not None:
-            st.success(f"**Hasil Prediksi: {clean_label(label)}**")
-            st.bar_chart(preds)
+    if img is not None:
+        if st.button("🔍 Jalankan Prediksi", type="primary"):
+            preds, label = predict_image(img)
+            if preds is not None and label is not None:
+                clean_lbl = clean_label(label)
+                confidence = np.max(preds)
+                
+                # Hasil prediksi
+                st.success(f"🎯 **Hasil Prediksi: {clean_lbl}**")
+                st.info(f"📊 **Confidence: {confidence:.2%}**")
+                
+                # Chart prediksi
+                st.subheader("📈 Distribusi Probabilitas")
+                
+                # Buat DataFrame untuk chart
+                chart_data = pd.DataFrame({
+                    'Class': [clean_label(cls) for cls in class_labels],
+                    'Probability': preds
+                })
+                chart_data = chart_data.sort_values('Probability', ascending=True)
+                
+                st.bar_chart(chart_data.set_index('Class')['Probability'])
+                
+                # Top 3 prediksi
+                st.subheader("🏆 Top 3 Prediksi")
+                top_indices = np.argsort(preds)[-3:][::-1]
+                
+                for i, idx in enumerate(top_indices):
+                    rank = ["🥇", "🥈", "🥉"][i]
+                    class_name = clean_label(class_labels[idx])
+                    prob = preds[idx]
+                    st.write(f"{rank} **{class_name}**: {prob:.2%}")
+                
+                # Deskripsi hasil
+                desc = CLASS_DESCRIPTIONS.get(clean_lbl, "Deskripsi belum tersedia.")
+                if desc != "Deskripsi belum tersedia.":
+                    st.subheader("📋 Deskripsi")
+                    st.markdown(f"<div style='text-align:justify; line-height:1.6; padding:15px; background-color:#2c2c2c; border-radius:8px;'>{desc}</div>", unsafe_allow_html=True)
+            else:
+                st.error("❌ Gagal melakukan prediksi. Silakan coba lagi dengan gambar yang berbeda.")
+
+    else:
+        st.info("📷 Silakan upload gambar atau ambil foto untuk memulai deteksi.")
