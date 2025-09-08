@@ -7,7 +7,7 @@ import tensorflow as tf
 from streamlit_option_menu import option_menu
 import base64
 
-# --- Import tambahan untuk memuat model Keras 3 ---
+# --- Import tambahan yang diperlukan ---
 from tensorflow.keras.layers import TFSMLayer
 from tensorflow.keras.models import Sequential
 
@@ -26,57 +26,61 @@ IMG_SIZE = (256, 256)
 
 @st.cache_resource(show_spinner="Memuat model AI...")
 def load_tf_model():
-    """
-    Memuat model dari format TensorFlow SavedModel (folder) menggunakan TFSMLayer
-    yang kompatibel dengan TensorFlow/Keras versi terbaru.
-    """
+    """Memuat model dari format TensorFlow SavedModel (folder)"""
     try:
         if not MODEL_PATH.exists():
             st.error(f"Folder model tidak ditemukan di: {MODEL_PATH}")
             return None
-        
-        # Buat layer inferensi dari folder model
-        inference_layer = TFSMLayer(str(MODEL_PATH), call_endpoint='serving_default')
-        
-        # Bungkus layer di dalam model Sequential agar mudah digunakan
-        model = Sequential([inference_layer])
+        model = Sequential([TFSMLayer(str(MODEL_PATH), call_endpoint='serving_default')])
         return model
-        
     except Exception as e:
         st.error(f"Gagal memuat model: {e}")
         return None
 
 def load_manual_labels():
     """
-    Menyediakan daftar kelas (label) secara manual.
+    Menyediakan daftar kelas (label) mentah secara manual.
     Urutan ini harus sama persis dengan urutan saat training model.
     """
     return [
         'Tomato___Bacterial_spot',
         'Tomato___Early_blight',
-        'Tomato___healthy',
         'Tomato___Late_blight',
         'Tomato___Leaf_Mold',
-        'Tomato___Tomato_mosaic_virus',
         'Tomato___Septoria_leaf_spot',
+        # Ini adalah nama mentah yang akan dipetakan ke "Spider Mites"
         'Tomato___Spider_mites Two-spotted_spider_mite',
         'Tomato___Target_Spot',
-        'Tomato___Tomato_Yellow_Leaf_Curl_Virus'
+        'Tomato___Tomato_Yellow_Leaf_Curl_Virus',
+        'Tomato___Tomato_mosaic_virus',
+        'Tomato___healthy'
     ]
 
 # Memuat model dan label saat aplikasi dimulai
 model = load_tf_model()
 class_labels = load_manual_labels()
 
-# ================= FUNGSI UTILITAS (TIDAK BERUBAH) =================
+# ================= FUNGSI UTILITAS =================
 
-def clean_label(lbl: str) -> str:
-    """Membersihkan nama label mentah menjadi format yang mudah dibaca."""
-    lbl = lbl.replace("Tomato___", "").replace("_", " ").strip()
-    if "Two-spotted spider mite" in lbl:
+def clean_label(raw_label: str) -> str:
+    """
+    Membersihkan label mentah menjadi format yang mudah dibaca dan
+    memastikan outputnya KONSISTEN dengan kunci di dictionary di bawah.
+    """
+    cleaned = raw_label.replace("Tomato___", "").replace("_", " ").strip()
+    # Penanganan kasus khusus agar cocok dengan dictionary
+    if "Spider mites" in cleaned:
         return "Spider Mites"
-    return " ".join(part.capitalize() for part in lbl.split())
+    if "mosaic virus" in cleaned:
+        return "Mosaic Virus"
+    if "Yellow Leaf Curl Virus" in cleaned:
+        return "Yellow Leaf Curl Virus"
+    if cleaned == "healthy":
+        return "Healthy"
+    # Menggunakan title() untuk kapitalisasi yang benar
+    return cleaned.title()
 
+# Kunci di sini HARUS cocok dengan output dari fungsi clean_label di atas
 CLASS_IMAGES = {
     "Bacterial Spot": "img/bacterial_spot.JPG",
     "Early Blight": "img/early_blight.JPG",
@@ -107,43 +111,30 @@ def resolve_image_path(p: str) -> Path | None:
     base = Path(p)
     if base.exists():
         return base
-    exts = [".JPG", ".jpg", ".jpeg", ".png", ".PNG"]
-    stem = base.with_suffix("")
-    for ext in exts:
-        cand = stem.with_suffix(ext)
-        if cand.exists():
-            return cand
-    return None
+    return None # Disederhanakan karena path di CLASS_IMAGES sudah spesifik
 
 # ================== FUNGSI PREDIKSI =======================
 def preprocess_image(image: Image.Image):
-    """Mempersiapkan gambar untuk input model."""
-    img = image.resize(IMG_SIZE)
+    img = image.resize(IMG_SIZE).convert("RGB") # Pastikan gambar RGB
     img_array = np.array(img) / 255.0
-    # Hapus alpha channel jika ada (misal dari gambar PNG)
-    if img_array.shape[-1] == 4:
-        img_array = img_array[..., :3]
     return np.expand_dims(img_array, axis=0)
 
 def predict_image(img: Image.Image):
-    """Melakukan prediksi pada gambar dan mengembalikan hasilnya."""
     if model is None:
         st.error("Model tidak berhasil dimuat.")
         return None, None
-        
+    
     processed_img = preprocess_image(img)
     predictions = model.predict(processed_img, verbose=0)
 
-    # Menangani output model dari TFSMLayer yang mungkin berbentuk dictionary
     if isinstance(predictions, dict):
-        # Ambil tensor output dari dictionary
         output_key = next(iter(predictions))
         preds = predictions[output_key][0]
     else:
         preds = predictions[0]
 
     top_index = np.argmax(preds)
-    top_label = class_labels[top_index] if class_labels else str(top_index)
+    top_label = class_labels[top_index]
     
     return preds, top_label
 
@@ -172,63 +163,58 @@ if selected == "Beranda":
     st.markdown(
         """
         <div style="padding:20px; background-color:#2c2c2c; border-radius:10px; margin-bottom:20px; color:#f1f1f1;">
-        <h3>Selamat Datang di Website Deteksi Penyakit Tomat</h3>
-        <p>Aplikasi ini menggunakan model <b>Convolutional Neural Network (CNN)</b> untuk mendeteksi 10 jenis kondisi daun tomat (9 penyakit dan 1 kondisi sehat) secara otomatis. Silakan jelajahi daftar penyakit di bawah ini atau pindah ke halaman "Deteksi Tanaman" untuk mencoba modelnya.</p>
+        <h3>Selamat Datang Di Website</h3>
+        <p>Aplikasi ini menggunakan model <b>Convolutional Neural Network (CNN)</b> untuk mendeteksi penyakit pada daun tomat secara otomatis.</p>
+        <p>Pada halaman ini terdapat 9 jenis penyakit tanaman tomat beserta deskripsi penyakitnya.</p>
         </div>
         """, unsafe_allow_html=True
     )
 
     if class_labels:
-        st.subheader("Daftar Jenis Penyakit")
+        st.subheader("Daftar Kelas")
         st.markdown("<br>", unsafe_allow_html=True)
-
         cols = st.columns(3)
-        for idx, raw_lbl in enumerate(sorted(class_labels)): # Diurutkan agar 'Healthy' tidak di tengah
-            clean_lbl = clean_label(raw_lbl)
-            mapped = CLASS_IMAGES.get(clean_lbl)
-            img_path = resolve_image_path(mapped) if mapped else None
-            desc = CLASS_DESCRIPTIONS.get(clean_lbl, "Deskripsi belum tersedia.")
-
+        # Iterasi melalui dictionary agar urutan gambar dan deskripsi pasti benar
+        for idx, (clean_lbl, desc) in enumerate(CLASS_DESCRIPTIONS.items()):
+            img_path_str = CLASS_IMAGES.get(clean_lbl)
+            
             with cols[idx % 3]:
-                st.markdown(f"<h4 style='text-align: center;'>{clean_lbl}</h4>", unsafe_allow_html=True)
+                st.markdown(f"<h4 style='text-align: center; color: #ff6f61;'>{clean_lbl}</h4>", unsafe_allow_html=True)
                 
-                if img_path:
-                    try:
-                        img_bytes = base64.b64encode(open(img_path, "rb").read()).decode()
-                        st.markdown(
-                            f"<div style='display:flex; justify-content:center; margin-bottom:15px;'><img src='data:image/jpeg;base64,{img_bytes}' width='200'></div>",
-                            unsafe_allow_html=True
-                        )
-                    except Exception as e:
-                        st.warning(f"Gagal memuat gambar untuk {clean_lbl}")
-                
+                if img_path_str and Path(img_path_str).exists():
+                    img_bytes = base64.b64encode(Path(img_path_str).read_bytes()).decode()
+                    st.markdown(
+                        f"<div style='display:flex; justify-content:center; margin-bottom:15px;'><img src='data:image/jpeg;base64,{img_bytes}' width='224' style='border-radius: 8px;'></div>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.warning(f"Gambar untuk '{clean_lbl}' tidak ditemukan.")
+
                 with st.expander("Lihat Deskripsi"):
                     st.markdown(f"<div style='text-align:justify; line-height:1.6;'>{desc}</div>", unsafe_allow_html=True)
-                st.markdown("---")
-
+                st.markdown("<br>", unsafe_allow_html=True)
 
 # Halaman Deteksi
 elif selected == "Deteksi Tanaman":
     st.title("🔎 Deteksi Penyakit Daun Tomat")
-    uploaded_file = st.file_uploader("📤 Unggah Gambar Daun Tomat Di Sini", type=["jpg", "jpeg", "png"])
+    uploaded_file = st.file_uploader("📤 Upload Gambar Daun Tomat", type=["jpg", "jpeg", "png"])
     
     if uploaded_file:
         col1, col2 = st.columns([1, 1.2])
-
         with col1:
             img = Image.open(uploaded_file).convert("RGB")
-            st.image(img, caption="📷 Gambar Anda", use_column_width=True)
-
+            st.image(img, caption="📷 Gambar yang diupload", use_column_width=True)
         with col2:
             if st.button("Jalankan Prediksi", use_container_width=True, type="primary"):
                 with st.spinner("🧠 Menganalisis gambar..."):
                     preds, label = predict_image(img)
                 
                 if preds is not None:
-                    st.success(f"**Hasil Deteksi: {clean_label(label)}**")
+                    clean_lbl = clean_label(label)
+                    st.success(f"**Hasil Deteksi: {clean_lbl}**")
                     
                     st.markdown("**Deskripsi Penyakit:**")
-                    st.info(CLASS_DESCRIPTIONS.get(clean_label(label), "Deskripsi tidak tersedia."))
+                    st.info(CLASS_DESCRIPTIONS.get(clean_lbl, "Deskripsi tidak tersedia."))
                     
                     st.markdown("**Distribusi Probabilitas:**")
                     prob_df = pd.DataFrame({
@@ -238,9 +224,6 @@ elif selected == "Deteksi Tanaman":
                     
                     st.dataframe(prob_df, use_container_width=True, hide_index=True, column_config={
                         "Probabilitas": st.column_config.ProgressColumn(
-                            "Probabilitas (%)",
-                            format="%.2f%%",
-                            min_value=0,
-                            max_value=100,
+                            "Probabilitas (%)", format="%.2f%%", min_value=0, max_value=100
                         )
                     })
