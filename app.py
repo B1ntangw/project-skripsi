@@ -4,9 +4,6 @@ import pandas as pd
 from PIL import Image
 from pathlib import Path
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
-from tensorflow.keras.applications import DenseNet121
 from streamlit_option_menu import option_menu
 
 # ======================== KONFIGURASI APLIKASI ==========================
@@ -17,58 +14,29 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- PERHATIAN: Gunakan file .h5 untuk memuat bobot (weights) ---
-# Pastikan Anda sudah mengunggah file 'best_model.h5' ke folder 'models'
-MODEL_WEIGHTS_PATH = Path("models/best_model.h5") 
+# --- PERHATIAN: Path sekarang menunjuk ke FOLDER SavedModel ---
+MODEL_PATH = Path("models/best_model_tf") 
 IMG_SIZE = (256, 256)
-NUM_CLASSES = 10 # Jumlah kelas penyakit Anda
 
 # ====================== FUNGSI-FUNGSI UTAMA =========================
 
-def create_model(num_classes):
-    """
-    Membangun ulang arsitektur model sama persis seperti saat training.
-    """
-    conv_base = DenseNet121(
-        weights=None, # Bobot akan kita muat nanti, jadi tidak perlu download dari imagenet
-        include_top=False,
-        input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3),
-        pooling="avg"
-    )
-    
-    model = Sequential([
-        conv_base,
-        BatchNormalization(),
-        Dense(256, activation="relu"),
-        Dropout(0.4),
-        Dense(num_classes, activation="softmax")
-    ])
-    
-    return model
-
 @st.cache_resource(show_spinner="Memuat model AI...")
-def load_model_with_weights():
+def load_model():
     """
-    Membuat arsitektur model dan memuat bobot yang telah dilatih.
-    Ini adalah metode yang lebih stabil daripada memuat seluruh model.
+    Memuat model dari format TensorFlow SavedModel. Ini cara paling andal.
     """
     try:
-        if not MODEL_WEIGHTS_PATH.exists():
-            st.error(f"❌ File bobot model tidak ditemukan di: {MODEL_WEIGHTS_PATH}", icon="🔥")
-            st.warning("Pastikan Anda telah mengunggah file 'best_model.h5' ke dalam folder 'models'.")
+        if not MODEL_PATH.exists():
+            st.error(f"❌ Folder model tidak ditemukan di: {MODEL_PATH}", icon="🔥")
+            st.warning("Pastikan folder 'best_model_tf' ada di dalam folder 'models'.")
             return None
-            
-        # 1. Buat kerangka modelnya
-        model = create_model(NUM_CLASSES)
         
-        # 2. Muat hanya bobotnya ke dalam kerangka tersebut
-        model.load_weights(MODEL_WEIGHTS_PATH)
-        
-        # Tidak perlu compile jika hanya untuk prediksi
+        # tf.keras.models.load_model secara otomatis mengenali format ini
+        model = tf.keras.models.load_model(MODEL_PATH)
         return model
         
     except Exception as e:
-        st.error(f"❌ Gagal memuat bobot model: {e}", icon="🔥")
+        st.error(f"❌ Gagal memuat model: {e}", icon="🔥")
         return None
 
 def load_labels():
@@ -134,13 +102,13 @@ CLASS_DESCRIPTIONS = {
 }
 
 # ====================== LOGIKA UTAMA APLIKASI =========================
-model = load_model_with_weights() # Menggunakan fungsi baru
+model = load_model() # Kembali menggunakan fungsi load_model yang sederhana
 class_labels = load_labels()
 
 if 'prediction_result' not in st.session_state:
     st.session_state.prediction_result = None
 
-# --- UI (Tidak ada perubahan signifikan di bawah ini) ---
+# --- UI (Tidak ada perubahan) ---
 selected = option_menu(
     menu_title=None, options=["Beranda", "Deteksi Penyakit"],
     icons=["house-door-fill", "camera-fill"], orientation="horizontal",
@@ -153,60 +121,48 @@ selected = option_menu(
 if selected == "Beranda":
     st.title("🍅 Klasifikasi Penyakit Daun Tomat")
     st.markdown("Aplikasi ini menggunakan **Convolutional Neural Network (CNN)** untuk mengidentifikasi penyakit pada daun tomat.")
-    
     st.subheader("Jenis Penyakit yang Dapat Dideteksi")
     for raw_label in class_labels:
         cleaned = clean_label(raw_label)
         desc = CLASS_DESCRIPTIONS.get(cleaned, "Deskripsi tidak tersedia.")
         with st.expander(f"**{cleaned}**"):
             st.write(desc)
-
 elif selected == "Deteksi Penyakit":
     st.title("📸 Unggah Gambar untuk Deteksi")
-    
     if model is None:
         st.error("Model tidak dapat digunakan. Harap periksa kembali file model Anda dan restart aplikasi.")
         st.stop()
-        
     source = st.radio("Pilih sumber gambar:", ["Upload File", "Gunakan Kamera"], horizontal=True)
-    
     image_file = None
     if source == "Upload File":
         image_file = st.file_uploader("Pilih gambar daun tomat...", type=["jpg", "jpeg", "png"])
     else:
         image_file = st.camera_input("Arahkan kamera ke daun tomat")
-
     if image_file:
         img = Image.open(image_file).convert("RGB")
         col1, col2 = st.columns([0.8, 1.2])
-        
         with col1:
             st.image(img, caption="Gambar yang Akan Dianalisis", use_column_width=True)
             if st.button("🔍 Deteksi Sekarang!", type="primary", use_container_width=True):
                 with st.spinner("🧠 Menganalisis gambar..."):
                     st.session_state.prediction_result = predict_image(model, img, class_labels)
-
         with col2:
             st.subheader("Hasil Analisis")
             if st.session_state.prediction_result:
                 result = st.session_state.prediction_result
                 cleaned_label = clean_label(result['label'])
-                
                 st.success(f"**Hasil Deteksi: {cleaned_label}**")
                 st.info(f"**Tingkat Keyakinan: {result['confidence']:.2%}**")
                 st.markdown("---")
-                
                 st.write("**Deskripsi:**")
                 desc = CLASS_DESCRIPTIONS.get(cleaned_label, "Deskripsi tidak tersedia.")
                 st.write(desc)
                 st.markdown("---")
-
                 st.write("**Probabilitas Semua Kelas:**")
                 prob_df = pd.DataFrame({
                     'Kelas': [clean_label(cls) for cls in class_labels],
                     'Probabilitas': result['probabilities'] * 100
                 }).sort_values(by="Probabilitas", ascending=False).reset_index(drop=True)
-                
                 st.dataframe(prob_df, use_container_width=True, hide_index=True, column_config={
                     "Probabilitas": st.column_config.ProgressColumn(
                         "Probabilitas (%)", format="%.2f%%", min_value=0, max_value=100,
