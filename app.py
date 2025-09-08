@@ -4,6 +4,9 @@ import pandas as pd
 from PIL import Image
 from pathlib import Path
 import tensorflow as tf
+# --- PERUBAHAN 1: Tambahkan import yang diperlukan ---
+from tensorflow.keras.layers import TFSMLayer
+from tensorflow.keras.models import Sequential
 from streamlit_option_menu import option_menu
 
 # ======================== KONFIGURASI APLIKASI ==========================
@@ -14,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- PERHATIAN: Path sekarang menunjuk ke FOLDER SavedModel ---
+# Path menunjuk ke FOLDER SavedModel
 MODEL_PATH = Path("models/best_model_tf") 
 IMG_SIZE = (256, 256)
 
@@ -23,20 +26,25 @@ IMG_SIZE = (256, 256)
 @st.cache_resource(show_spinner="Memuat model AI...")
 def load_model():
     """
-    Memuat model dari format TensorFlow SavedModel. Ini cara paling andal.
+    Memuat model menggunakan metode TFSMLayer yang kompatibel dengan Keras 3.
     """
     try:
-        if not MODEL_PATH.exists():
-            st.error(f"❌ Folder model tidak ditemukan di: {MODEL_PATH}", icon="🔥")
-            st.warning("Pastikan folder 'best_model_tf' ada di dalam folder 'models'.")
+        if not MODEL_PATH.exists() or not (MODEL_PATH / "saved_model.pb").exists():
+            st.error(f"❌ Folder model tidak ditemukan atau tidak valid di: {MODEL_PATH}", icon="🔥")
+            st.warning("Pastikan folder 'best_model_tf' yang berisi file 'saved_model.pb' ada di dalam folder 'models'.")
             return None
         
-        # tf.keras.models.load_model secara otomatis mengenali format ini
-        model = tf.keras.models.load_model(MODEL_PATH)
+        # --- PERUBAHAN 2: Gunakan TFSMLayer untuk memuat SavedModel ---
+        # Buat layer inferensi dari folder model
+        inference_layer = TFSMLayer(str(MODEL_PATH), call_endpoint='serving_default')
+        
+        # Bungkus layer tersebut di dalam model Sequential agar kompatibel dengan sisa kode
+        model = Sequential([inference_layer])
+        
         return model
         
     except Exception as e:
-        st.error(f"❌ Gagal memuat model: {e}", icon="🔥")
+        st.error(f"❌ Gagal memuat model dengan TFSMLayer: {e}", icon="🔥")
         return None
 
 def load_labels():
@@ -51,34 +59,39 @@ def load_labels():
 
 def preprocess_image(image: Image.Image):
     """Melakukan pra-pemrosesan gambar agar sesuai dengan input model."""
-    try:
-        img = image.resize(IMG_SIZE).convert("RGB")
-        img_array = np.array(img, dtype=np.float32) / 255.0
-        img_batch = np.expand_dims(img_array, axis=0)
-        return img_batch
-    except Exception as e:
-        st.error(f"❌ Error saat memproses gambar: {e}", icon="🖼️")
-        return None
+    img = image.resize(IMG_SIZE).convert("RGB")
+    img_array = np.array(img, dtype=np.float32) / 255.0
+    img_batch = np.expand_dims(img_array, axis=0)
+    return img_batch
 
 def predict_image(model, image: Image.Image, class_labels: list):
     """Melakukan prediksi pada gambar."""
     if model is None: return None
+    
+    # Pra-pemrosesan gambar
     processed_img = preprocess_image(image)
-    if processed_img is None: return None
-
-    try:
-        predictions = model.predict(processed_img)
+    
+    # Melakukan prediksi
+    predictions = model.predict(processed_img)
+    
+    # Keras 3 dengan TFSMLayer mungkin memberikan output dalam format dictionary
+    # Kita perlu mengekstrak tensor outputnya
+    if isinstance(predictions, dict):
+        # Cari kunci output yang benar, biasanya 'dense_1' atau nama layer output terakhir
+        # Jika nama layer Anda berbeda, sesuaikan di sini
+        output_key = next(iter(predictions)) 
+        pred_probs = predictions[output_key][0]
+    else:
+        # Jika outputnya normal (bukan dictionary)
         pred_probs = predictions[0]
-        predicted_index = np.argmax(pred_probs)
-        
-        return {
-            "label": class_labels[predicted_index],
-            "confidence": pred_probs[predicted_index],
-            "probabilities": pred_probs
-        }
-    except Exception as e:
-        st.error(f"❌ Gagal melakukan prediksi: {e}", icon="🤯")
-        return None
+
+    predicted_index = np.argmax(pred_probs)
+    
+    return {
+        "label": class_labels[predicted_index],
+        "confidence": pred_probs[predicted_index],
+        "probabilities": pred_probs
+    }
 
 def clean_label(label: str) -> str:
     """Membersihkan nama label untuk ditampilkan."""
@@ -87,7 +100,7 @@ def clean_label(label: str) -> str:
     if "Two-spotted spider mite" in cleaned: return "Spider Mites (Two-Spotted)"
     return cleaned.title()
 
-# ====================== DATA DESKRIPSI ==========================
+# ====================== DATA DESKRIPSI (Sama seperti sebelumnya) ==========================
 CLASS_DESCRIPTIONS = {
     "Bacterial Spot": "Disebabkan oleh bakteri Xanthomonas. Gejalanya berupa bercak kecil, gelap, dan berair pada daun.",
     "Early Blight": "Disebabkan oleh jamur Alternaria solani. Gejalanya bercak cokelat dengan pola cincin konsentris (target).",
@@ -101,14 +114,13 @@ CLASS_DESCRIPTIONS = {
     "Healthy": "Tanaman sehat dengan daun hijau segar, tanpa tanda-tanda penyakit."
 }
 
-# ====================== LOGIKA UTAMA APLIKASI =========================
-model = load_model() # Kembali menggunakan fungsi load_model yang sederhana
+# ====================== LOGIKA UTAMA APLIKASI (Sama seperti sebelumnya) =========================
+model = load_model()
 class_labels = load_labels()
 
 if 'prediction_result' not in st.session_state:
     st.session_state.prediction_result = None
 
-# --- UI (Tidak ada perubahan) ---
 selected = option_menu(
     menu_title=None, options=["Beranda", "Deteksi Penyakit"],
     icons=["house-door-fill", "camera-fill"], orientation="horizontal",
