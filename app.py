@@ -203,7 +203,7 @@ elif selected == "Deteksi Tanaman":
         col1, col2 = st.columns([1, 1.2])
         with col1:
             img = Image.open(uploaded_file).convert("RGB")
-            st.image(img, caption="Gambar yang diupload", use_column_width=True)
+            st.image(img, caption="Gambar yang diupload", use_container_width=True)
         with col2:
             if st.button("Jalankan Prediksi", use_container_width=True, type="primary"):
                 with st.spinner("Menganalisis gambar..."):
