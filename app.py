@@ -13,8 +13,8 @@ from tensorflow.keras.models import Sequential
 
 # ======================== KONFIGURASI ==========================
 st.set_page_config(
-    page_title="🍅 Tomato Leaf Disease Classifier",
-    page_icon="🍅",
+    page_title="Tomato Leaf Disease Classifier",
+    page_icon="",
     layout="wide"
 )
 
@@ -159,7 +159,7 @@ with st.container():
 
 # Halaman Beranda
 if selected == "Beranda":
-    st.title("🍅 Tomato Leaf Disease Classifier")
+    st.title("Tomato Leaf Disease Classifier")
     st.markdown(
         """
         <div style="padding:20px; background-color:#2c2c2c; border-radius:10px; margin-bottom:20px; color:#f1f1f1;">
@@ -196,17 +196,17 @@ if selected == "Beranda":
 
 # Halaman Deteksi
 elif selected == "Deteksi Tanaman":
-    st.title("🔎 Deteksi Penyakit Daun Tomat")
-    uploaded_file = st.file_uploader("📤 Upload Gambar Daun Tomat", type=["jpg", "jpeg", "png"])
+    st.title("Deteksi Penyakit Daun Tomat")
+    uploaded_file = st.file_uploader("Upload Gambar Daun Tomat", type=["jpg", "jpeg", "png"])
     
     if uploaded_file:
         col1, col2 = st.columns([1, 1.2])
         with col1:
             img = Image.open(uploaded_file).convert("RGB")
-            st.image(img, caption="📷 Gambar yang diupload", use_column_width=True)
+            st.image(img, caption="Gambar yang diupload", use_column_width=True)
         with col2:
             if st.button("Jalankan Prediksi", use_container_width=True, type="primary"):
-                with st.spinner("🧠 Menganalisis gambar..."):
+                with st.spinner("Menganalisis gambar..."):
                     preds, label = predict_image(img)
                 
                 if preds is not None:
